@@ -8,9 +8,6 @@ import dateparser
 from datetime import datetime
 from spacy.language import Language
 from spacy.tokens import Doc
-import warnings
-warnings.filterwarnings("ignore", message="CropBox missing from /Page")
-
 
 # Load spaCy model globally
 nlp = spacy.load("en_core_web_sm")
@@ -49,7 +46,7 @@ def slugify(text):
 def rename_file(file_path, summary):
     base_dir = os.path.dirname(file_path)
     ext = os.path.splitext(file_path)[1]
-
+    
     client = summary.get("parties_involved", ["Unknown"])[0].replace(" ", "_")
     doc_type = slugify(summary.get("document_type", "Doc"))
     date_str = summary.get("date_filed", "NoDate")
@@ -68,23 +65,17 @@ def rename_file(file_path, summary):
 
 def extract_text(path):
     ext = os.path.splitext(path)[1].lower()
-
+    
     if ext == ".txt":
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
-
+    
     elif ext == ".pdf":
         with pdfplumber.open(path) as pdf:
             return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
-
-    elif ext in [".png", ".jpg", ".jpeg"]:
-        from PIL import Image
-        import pytesseract
-        return pytesseract.image_to_string(Image.open(path))
-
+    
     else:
-        raise ValueError("Unsupported file type. Use .txt, .pdf, or image")
-
+        raise ValueError("Unsupported file type. Use .txt or .pdf")
 
 def normalize_entity(text):
     return re.sub(r"\s+", " ", text.strip().replace("\n", " ")).strip(",. ")
@@ -121,7 +112,7 @@ def build_summary(entities, filename, doc_type_from_nlp):
         "date_filed": filing_date
     }
 
-def analyze_document(file_path):
+def process_document(file_path, rename=False):
     text = extract_text(file_path)
     doc = nlp(text)
 
@@ -138,19 +129,9 @@ def analyze_document(file_path):
 
     summary = build_summary(entity_summary, os.path.basename(file_path), doc._.document_type)
 
-    return {
-        "summary": summary,
-        "entities": entity_summary
-    }
-
-def process_document(file_path, rename=False):
-    result = analyze_document(file_path)
-    summary = result["summary"]
-    entities = result["entities"]
-
     print(f"\n📘 Processed: {file_path}")
     print("🧾 Entity Summary:\n")
-    for label, items in entities.items():
+    for label, items in entity_summary.items():
         print(f"{label}: {items}")
 
     output_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -161,16 +142,14 @@ def process_document(file_path, rename=False):
         json.dump({
             "filename": os.path.basename(file_path),
             "summary": summary,
-            "entities": entities
+            "entities": entity_summary
         }, f, indent=2)
-
     if rename:
         rename_file(file_path, summary)
 
     print(f"\n📌 Summary: {summary}")
     print(f"💾 Saved structured output to: {output_path}")
-
-    return result
+    
 
 # CLI interface
 if __name__ == "__main__":
@@ -181,4 +160,4 @@ if __name__ == "__main__":
     parser.add_argument("--rename", action="store_true", help="Rename the original file using summary metadata")
     args = parser.parse_args()
 
-    process_document(args.file, args.rename)
+    process_document(args.file)
