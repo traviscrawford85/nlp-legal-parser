@@ -1,0 +1,20 @@
+document_types:
+  Workers' Comp Filing:
+    - "issues filed"
+    - "workers' compensation commission"
+    - "claim number"
+  Auto Accident Intake:
+    - "motor vehicle accident"
+    - "auto accident"
+    - "date of loss"
+  Litigation - Complaint:
+    - "complaint"
+    - "plaintiff"
+    - "defendant"
+  Discovery Response:
+    - "interrogatories"
+    - "request for production"
+  Medical Malpractice Intake:
+    - "hospital"
+    - "doctor"
+    - "medication error"

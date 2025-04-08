@@ -1,7 +1,9 @@
+from pathlib import Path
 import spacy
 import os
 import pdfplumber
 import json
+import yaml
 from collections import defaultdict
 import re
 import dateparser
@@ -18,30 +20,38 @@ nlp = spacy.load("en_core_web_sm")
 # Add custom Doc attribute
 Doc.set_extension("document_type", default="Unknown")
 
+# Load keyword-based document type rules from YAML
+RULES_PATH = os.path.join(os.path.dirname(__file__), "document_rules.yml")
+
+def load_rules():
+    if os.path.exists(RULES_PATH):
+        with open(RULES_PATH, "r") as f:
+            return yaml.safe_load(f).get("document_types", {})
+    return {}
+
+document_type_rules = load_rules()
+
 @Language.component("document_type_detector")
 def document_type_detector(doc):
     lowered = doc.text.lower()
-    match = None
+    detected_type = "Unknown"
 
-    if "motion to dismiss" in lowered:
-        match = "Motion to Dismiss"
-    elif "motion" in lowered:
-        match = "Motion"
-    elif "affidavit" in lowered:
-        match = "Affidavit"
-    elif "complaint" in lowered:
-        match = "Complaint"
-    elif "notice of hearing" in lowered:
-        match = "Notice of Hearing"
-    else:
-        match = "Unknown"
+    for doc_type, keywords in document_type_rules.items():
+        if all(keyword.lower() in lowered for keyword in keywords):
+            detected_type = doc_type
+            break
+        elif any(keyword.lower() in lowered for keyword in keywords):
+            detected_type = doc_type  # partial match if no exact match
 
-    doc._.document_type = match
-    print(f"🔍 Detected document type: {match}")
+    doc._.document_type = detected_type
+    print(f"🔍 Detected document type: {detected_type}")
     return doc
 
 # Register component in spaCy pipeline
-nlp.add_pipe("document_type_detector", last=True)
+if "document_type_detector" not in nlp.pipe_names:
+    nlp.add_pipe("document_type_detector", last=True)
+
+# Register component in spaCy pipeline
 
 def slugify(text):
     return re.sub(r"[^\w]+", "_", text.strip()).strip("_")
@@ -122,23 +132,42 @@ def build_summary(entities, filename, doc_type_from_nlp):
     }
 
 def analyze_document(file_path):
-    text = extract_text(file_path)
+    from pdfplumber import open as open_pdf
+    from pdf2image import convert_from_path
+    from pytesseract import image_to_string
+    from PIL import Image
+    import mimetypes
+
+    ext = Path(file_path).suffix.lower()
+    text = ""
+
+    if ext == ".pdf":
+        try:
+            with open_pdf(file_path) as pdf:
+                text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        except:
+            images = convert_from_path(file_path)
+            text = "\n".join([image_to_string(img) for img in images])
+    elif ext in [".png", ".jpg", ".jpeg"]:
+        text = image_to_string(Image.open(file_path))
+    elif ext == ".txt":
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+
     doc = nlp(text)
-
-    entity_summary = defaultdict(list)
+    entity_summary = {}
     for ent in doc.ents:
-        clean = normalize_entity(ent.text)
-        if clean:
-            entity_summary[ent.label_].append(clean)
+        label = ent.label_
+        entity_summary.setdefault(label, []).append(ent.text.strip())
 
-    # De-duplicate and sort
-    entity_summary = {
-        k: sorted(set(v)) for k, v in entity_summary.items()
+    summary = {
+        "document_type": doc._.document_type,
+        "date_filed": next((ent.text for ent in doc.ents if ent.label_ == "DATE"), None),
+        "entities": entity_summary
     }
 
-    summary = build_summary(entity_summary, os.path.basename(file_path), doc._.document_type)
-
     return {
+        "text": text,
         "summary": summary,
         "entities": entity_summary
     }
